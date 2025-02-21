@@ -1,6 +1,8 @@
 import os
+import sys
 from datetime import datetime,timedelta
 from typing import Tuple, List
+import logging
 
 def read_initial_time(file, lines_to_skip: int) -> Tuple[str, str]:
     """Read the specified line of the file to extract the initial timestamp.
@@ -58,7 +60,18 @@ def round_to_half_hour_mark(initial_date: str, frequency: int = 20) -> tuple[dat
         - The rounded-up datetime object.
         - The number of observations until that rounded time.
     """
-    current_date = datetime.strptime(initial_date, '%Y-%m-%d %H:%M:%S.%f')
+    date_formats = ["%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"]
+    
+    current_date = None
+    for date_format in date_formats:
+        try:
+            current_date = datetime.strptime(initial_date, date_format)
+            break
+        except ValueError:
+            continue
+        
+    if current_date is None:
+        raise ValueError(f"Unrecognized date format: {initial_date}")
 
     # Determine next rounded time (HH:00:00 or HH:30:00)
     if current_date.minute < 30:
@@ -106,41 +119,66 @@ def process_and_write_lines(lines_to_process: List[str], output_directory: str, 
         time_block: time(blocks) inm minutes eg: 30 minutes block
     """
     if not lines_to_process:
-        print("No lines to process. Skipping.")
+        logging.warning("No lines to process. Skipping.")
         return
     
     date_str = lines_to_process[0].split(',')[0].strip('"')
     output_filename = format_filename(date_str, site_name)
     output_path = os.path.join(output_directory, output_filename)
     
+    
     if os.path.exists(output_path):
         num_lines = count_lines(output_path)
         
         if num_lines == block_size:
-            print(f"File {output_filename} exists and is complete. Skipping.")
+            logging.info(f"File {output_filename} exists and is complete. Skipping.")
             return
         elif num_lines < block_size: 
-            print(f"Appending to {output_filename} (incomplete file: {num_lines}/{block_size} lines).")
+            logging.info(f"Appending to {output_filename} (incomplete file: {num_lines}/{block_size} lines).")
             mode = 'a'
         else:
-            print(f"File {output_filename} exists but is larger than expected ({num_lines} lines). Skipping.")
+            logging.warning(f"File {output_filename} exists but is larger than expected ({num_lines} lines). Skipping.")
             return
     else: 
-        print(f"Writing new file {output_filename}")
+        logging.info(f"Writing new file {output_filename}")
         mode = 'w'
         # Write the processed lines to the file
     with open(output_path, mode) as outfile:
         for line in lines_to_process:
-            processed_line = '\t'.join([f"{float(entry):.6f}" if entry.strip('"') != "NAN" else "NAN" for entry in line.split(',')[2:9]]) + '\n'
+            # I do not need sixth column, so I am skipping it
+            processed_line = '\t'.join([f"{float(entry):.6f}" if entry.strip('"') != "NAN" else "NAN" for i, entry in enumerate(line.split(',')[2:9]) if i != 4]) + '\n'
             outfile.write(processed_line)
-        
+
+def setup_logging(output_directory: str, years: list):
+    """Set up logging for the script."""
+    log_filename = os.path.join(output_directory, f'processing_{years[0]}_{years[-1]}.log')
+    
+    logging.basicConfig(
+        filename=log_filename,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logging.getLogger().addHandler(console_handler)
+      
 
 def main():
     """Main function to process all .dat files in the specified directory."""
-    file_location = '/Volumes/Group/speuldpro_praj/2010/TOA5/'
-    output_directory = '/Volumes/Group/speuldpro_praj/30mins_files'
+    file_location = '/Volumes/ITC/WRS/Group/speuldpro_praj/'
+    output_directory = '/Volumes/ITC/WRS/Group/speuldpro_praj/30mins_files'
+    years = list(range(2012, 2020))
+    #list all .dat files in the directory 
+    
     # file_location = "/Users/prajzwal/PhD/TOA5/"
     # output_directory = "/Users/prajzwal/PhD/30mins_files/2010"
+    # Set up logging
+    setup_logging(output_directory, years)
+    logging.info("Starting file processing...")
+    
     frequency = 20  # Data frequency
     time_block = 30 
     site_name = "speuld"
@@ -149,91 +187,110 @@ def main():
     # Ensure output directory exists
     os.makedirs(output_directory, exist_ok=True)
 
+    # List .dat files in the input location including all folders. 
+    dat_files = [
+    os.path.join(file_location, str(year), 'TOA5', file)
+    for year in years
+    if os.path.exists(os.path.join(file_location, str(year), 'TOA5'))
+    for file in sorted(os.listdir(os.path.join(file_location, str(year), 'TOA5')))
+    if file.endswith('.dat')
+    ]
+    
     # List .dat files in the input location
-    dat_files = sorted([f for f in os.listdir(file_location) if f.endswith('.dat')])
+    # dat_files = sorted([f for f in os.listdir(file_location) if f.endswith('.dat')])
    
     # If no files, print error and return
     if not dat_files:
-        print("No .dat files found in the specified directory.")
+        logging.error("No .dat files found in the specified directory.")
         return
 
-    #check if file path already exists or not
-    line_indicator = 4  # Start reading from the 4th line
+   
     # Process the first file
     for dat_file in dat_files:
-        
+         #check if file path already exists or not
+         
+        line_indicator = 4  # Start reading from the 4th line
+    
         # get the file path
         file_path = os.path.join(file_location, dat_file)
-        print(f"Processing file: {dat_file}")
+        logging.info(f"Processing file: {dat_file}")
         
-        # Get number of lines in file
-        with open(file_path, 'r') as file:
-            no_of_lines_in_file = sum(1 for _ in file)
-        
-        if no_of_lines_in_file == 0:
-            print(f"Skipping empty file: {dat_file}")
-            continue
+        try:
+            # Get number of lines in file
+            with open(file_path, 'r') as file:
+                no_of_lines_in_file = sum(1 for _ in file)
             
-        # Read the fourth line separately
-        with open(file_path, 'r') as file:
-            fourth_line, initial_date = read_initial_time(file=file, lines_to_skip=4)
-            
-            if is_on_the_hour_or_half_hour(initial_date):
-                print(f"{dat_file} starts on 00 or 30 minutes")
-            
-                # Read and process 30-min blocks
-                line_indicator = 4  # Start from the fourth line
+            if no_of_lines_in_file == 0:
+                logging.warning(f"Skipping empty file: {dat_file}")
+                continue
                 
-                while line_indicator + block_size <= no_of_lines_in_file:
-                    lines_to_process = [fourth_line]  # First line is the fourth line
-                    try:
-                        lines_to_process.extend(next(file).strip() for _ in range(block_size - 1))
-                    except StopIteration:
-                        break  # Stop if EOF
-                    process_and_write_lines(lines_to_process = lines_to_process, 
-                                            output_directory = output_directory, 
-                                            site_name = site_name, 
-                                            block_size=block_size)
-                    line_indicator += block_size
-            else:
-                print(f"{dat_file} does not start on 00 or 30 minutes")
+            # Read the fourth line separately
+            with open(file_path, 'r') as file:
+                fourth_line, initial_date = read_initial_time(file=file, lines_to_skip=4)
                 
-                # Get the lines until the next 00 or 30-minute mark
-                next_half_hour_mark, lines_until_next_half_hour = round_to_half_hour_mark(initial_date, frequency)
-                lines_to_process = [fourth_line]
-                try:
-                    lines_to_process.extend(next(file).strip() for _ in range(int(lines_until_next_half_hour) - 1))
-                except StopIteration:
-                    pass
+                if is_on_the_hour_or_half_hour(initial_date):
+                    logging.info(f"{dat_file} starts on 00 or 30 minutes")
                 
-                process_and_write_lines(lines_to_process = lines_to_process, 
-                                        output_directory = output_directory, 
-                                        site_name = site_name, 
-                                        block_size=block_size)
-                line_indicator += lines_until_next_half_hour
-                
-                # Process the remaining full 30-minute blocks
-                while line_indicator + block_size <= no_of_lines_in_file:
-                    lines_to_process = []
-                    try:
-                        lines_to_process.extend(next(file).strip() for _ in range(block_size))
-                    except StopIteration:
-                        break
-
-                    process_and_write_lines(lines_to_process = lines_to_process, 
-                                            output_directory = output_directory, 
-                                            site_name = site_name, 
-                                            block_size=block_size)
-                    line_indicator += block_size
+                    # Read and process 30-min blocks
+                    line_indicator = 4  # Start from the fourth line
                     
-            # Process any remaining lines
-            remaining_lines = file.readlines()
-            if remaining_lines:
-                print(f"Processing remaining lines for {dat_file}")
-                process_and_write_lines(lines_to_process = remaining_lines, 
-                                        output_directory = output_directory, 
-                                        site_name = site_name, 
-                                        block_size=block_size)
+                    while line_indicator + block_size <= no_of_lines_in_file:
+                        lines_to_process = [fourth_line]  # First line is the fourth line
+                        try:
+                            lines_to_process.extend(next(file).strip() for _ in range(block_size - 1))
+                        except StopIteration:
+                            break  # Stop if EOF
+                        process_and_write_lines(lines_to_process = lines_to_process, 
+                                                output_directory = output_directory, 
+                                                site_name = site_name, 
+                                                block_size=block_size)
+                        line_indicator += block_size
+                else:
+                    logging.info(f"{dat_file} does not start on 00 or 30 minutes")
+                    
+                    # Get the lines until the next 00 or 30-minute mark
+                    next_half_hour_mark, lines_until_next_half_hour = round_to_half_hour_mark(initial_date, frequency)
+                    lines_to_process = [fourth_line]
+                    try:
+                        lines_to_process.extend(next(file).strip() for _ in range(int(lines_until_next_half_hour) - 1))
+                    except StopIteration:
+                        pass
+                    
+                    process_and_write_lines(lines_to_process = lines_to_process, 
+                                            output_directory = output_directory, 
+                                            site_name = site_name, 
+                                            block_size=block_size)
+                    line_indicator += lines_until_next_half_hour
+                    
+                    # Process the remaining full 30-minute blocks
+                    while line_indicator + block_size <= no_of_lines_in_file:
+                        lines_to_process = []
+                        try:
+                            lines_to_process.extend(next(file).strip() for _ in range(block_size))
+                        except StopIteration:
+                            break
+
+                        process_and_write_lines(lines_to_process = lines_to_process, 
+                                                output_directory = output_directory, 
+                                                site_name = site_name, 
+                                                block_size=block_size)
+                        line_indicator += block_size
+                        
+                # Process any remaining lines
+                remaining_lines = file.readlines()
+                if remaining_lines:
+                    logging.info(f"Processing remaining lines for {dat_file}")
+                    process_and_write_lines(lines_to_process = remaining_lines, 
+                                            output_directory = output_directory, 
+                                            site_name = site_name, 
+                                            block_size=block_size)
+        except Exception as e:
+            logging.error(f"Error processing {dat_file}: {e}", exc_info=True)
+                        
                 
 if __name__ == "__main__":
     main()
+    
+initial_date = '2010-07-02 23:59:28'
+
+trial = format_filename(trial_date, 'speuld')
