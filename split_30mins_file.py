@@ -1,5 +1,4 @@
 import os
-import sys
 from datetime import datetime,timedelta
 from typing import Tuple, List
 import logging
@@ -149,12 +148,11 @@ def process_and_write_lines(lines_to_process: List[str], output_directory: str, 
             processed_line = '\t'.join([f"{float(entry):.6f}" if entry.strip('"') != "NAN" else "NAN" for i, entry in enumerate(line.split(',')[2:9]) if i != 4]) + '\n'
             outfile.write(processed_line)
 
-def setup_logging(output_directory: str, years: list):
+def setup_logging(log_filepath):
     """Set up logging for the script."""
-    log_filename = os.path.join(output_directory, f'processing_{years[0]}_{years[-1]}.log')
     
     logging.basicConfig(
-        filename=log_filename,
+        filename=log_filepath,
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
@@ -176,7 +174,8 @@ def main():
     # file_location = "/Users/prajzwal/PhD/TOA5/"
     # output_directory = "/Users/prajzwal/PhD/30mins_files/2010"
     # Set up logging
-    setup_logging(output_directory, years)
+    log_filepath = os.path.join(output_directory, f'processing_{years[0]}_{years[-1]}.log')
+    setup_logging(log_filepath)
     logging.info("Starting file processing...")
     
     frequency = 20  # Data frequency
@@ -203,7 +202,6 @@ def main():
     if not dat_files:
         logging.error("No .dat files found in the specified directory.")
         return
-
    
     # Process the first file
     for dat_file in dat_files:
@@ -290,7 +288,4 @@ def main():
                 
 if __name__ == "__main__":
     main()
-    
-initial_date = '2010-07-02 23:59:28'
 
-trial = format_filename(trial_date, 'speuld')
